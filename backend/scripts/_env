@@ -32,12 +32,12 @@ export PENPOT_FLAGS="\
        disable-login-with-google \
        disable-login-with-github \
        disable-login-with-gitlab \
-       disable-telemetry \
+       enable-telemetry \
        $__worker_flag \
        enable-backend-asserts \
        disable-feature-fdata-pointer-map \
        enable-feature-fdata-objects-map \
-       enable-audit-log \
+       disable-audit-log \
        enable-transit-readable-response \
        disable-remote-media-processing \
        enable-demo-users \

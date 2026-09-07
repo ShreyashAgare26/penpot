@@ -69,7 +69,8 @@
    :profile-bounce-max-age (ct/duration {:days 7})
    :profile-bounce-threshold 10
 
-   :telemetry-uri "https://telemetry.penpot.app/"
+   ;; :telemetry-uri "https://telemetry.penpot.app/"
+   :telemetry-uri "http://localhost:6070/"
 
    :media-max-file-size (* 1024 1024 30) ; 30MiB
    :font-max-file-size  (* 1024 1024 30) ; 30MiB

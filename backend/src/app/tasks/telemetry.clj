@@ -334,7 +334,7 @@
 
           ;; Ship any anonymous audit-log events accumulated in
           ;; telemetry mode (only when audit-log feature is off).
-          (when-not (contains? cf/flags :audit-log)
+          (when true  ;;-not (contains? cf/flags :audit-log)
             (try
               (db/run! cfg collect-and-send-audit-events)
               (catch Exception cause
