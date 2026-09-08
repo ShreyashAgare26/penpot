@@ -6,8 +6,8 @@
 (ns app.common.files.variant
   (:require
    [app.common.data.macros :as dm]
-   [app.common.types.component :as ctc]
-   [app.common.types.components-list :as ctcl]
+   [app.common.types.component :as ctk]
+   [app.common.types.components-list :as ctkl]
    [app.common.types.variant :as ctv]))
 
 (defn find-variant-components
@@ -25,15 +25,8 @@
    ;; We can't simply filter components, because we need to maintain the order
    (->> (dm/get-in objects [variant-id :shapes])
         (map #(dm/get-in objects [% :component-id]))
-        (map #(ctcl/get-component data % true))
+        (map #(ctkl/get-component data % true))
         reverse)))
-
-(defn extract-properties-names
-  [shape data]
-  (->> shape
-       (#(ctcl/get-component data (:component-id %) true))
-       :variant-properties
-       (map :name)))
 
 (defn extract-properties-values
   "Get a map of properties associated to their possible values"
@@ -74,10 +67,10 @@
 
 (defn get-primary-component
   [data component-id]
-  (when-let [component (ctcl/get-component data component-id)]
-    (if (ctc/is-variant? component)
+  (when-let [component (ctkl/get-component data component-id)]
+    (if (ctk/is-variant? component)
       (->> component
            (get-primary-variant data)
            :component-id
-           (ctcl/get-component data))
+           (ctkl/get-component data))
       component)))
