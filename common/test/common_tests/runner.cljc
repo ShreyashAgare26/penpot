@@ -87,6 +87,7 @@
    [common-tests.types.token-test]
    [common-tests.types.tokens-lib-test]
    [common-tests.types.tokens-status-test]
+   [common-tests.types.variant-test]
    [common-tests.undo-stack-test]
    [common-tests.uuid-test]))
 
@@ -142,6 +143,7 @@
    'common-tests.logic.token-test
    'common-tests.logic.variants-switch-test
    'common-tests.math-test
+   'common-tests.types.variant-test
    'common-tests.media-test
    'common-tests.path-names-test
    'common-tests.record-test

@@ -57,7 +57,12 @@
 (def value-prefix "Value ")
 
 (defn properties-to-name
-  "Transform the properties into a name, with the values separated by comma"
+  "Transform the properties into a name, with the values separated by comma.
+
+   Example:
+
+   [{:name 'Property 1' :value 'Button'}
+    {:name 'Property 2' :value 'Primary'}] -> 'Button, Primary'"
   [properties]
   (->> properties
        (map :value)
@@ -65,7 +70,12 @@
        (str/join ", ")))
 
 (defn next-property-number
-  "Returns the next property number, to avoid duplicates on the property names"
+  "Returns the next property number, to avoid duplicates on the property names.
+
+   Example:
+
+   [{:name 'Property 1' :value 'x'}
+    {:name 'Property 3' :value 'y'}] -> 4"
   [properties]
   (let [numbers (keep
                  #(some->> (:name %) (re-find property-regex) second d/parse-integer)
@@ -76,13 +86,24 @@
     (inc (max max-num (count properties)))))
 
 (defn add-new-property
-  "Adds a new property with generated name and provided value to the existing properties list."
+  "Adds a new property with generated name and provided value to the existing properties list.
+
+   Example:
+
+   [{:name 'Property 1' :value 'x'}] 'y' -> [{:name 'Property 1' :value 'x'}
+                                             {:name 'Property 2' :value 'y'}]"
   [properties value]
   (conj properties {:name (str property-prefix (next-property-number properties))
-               :value value}))
+                    :value value}))
 
 (defn add-new-properties
-  "Adds new properties with generated names and provided values to the existing properties list."
+  "Adds new properties with generated names and provided values to the existing properties list.
+
+   Example:
+
+   [{:name 'Property 1' :value 'x'}] ['a' 'b'] -> [{:name 'Property 1' :value 'x'}
+                                                   {:name 'Property 2' :value 'a'}
+                                                   {:name 'Property 3' :value 'b'}]"
   [properties values]
   (let [next-prop-num (next-property-number properties)
         xf (map-indexed (fn [i v]
@@ -92,7 +113,15 @@
 
 (defn path-to-properties
   "From a list of properties and a name with path, assign each token of the
-   path as value of a different property"
+   path as value of a different property. It can add blank properties if
+   necessary, until the min-properties number is reached.
+  
+   Example with min-properties=4:
+
+   'Button / Primary / Hover' -> [{:name 'Property 1' :value 'Button'}
+                                  {:name 'Property 2' :value 'Primary'}
+                                  {:name 'Property 3' :value 'Hover'}
+                                  {:name 'Property 4' :value ''}]"
   ([path properties]
    (path-to-properties path properties 0))
   ([path properties min-properties]
@@ -105,7 +134,12 @@
      (add-new-properties assigned remaining))))
 
 (defn properties-map->formula
-  "Transforms a map of properties to a formula of properties omitting the empty ones"
+  "Transforms a map of properties to a formula of properties omitting the empty ones.
+
+   Example:
+
+   [{:name 'Property 1' :value 'Button'}
+    {:name 'Property 2' :value 'Primary'}] -> 'Property 1=Button, Property 2=Primary'"
   [properties]
   (->> properties
        (keep (fn [{:keys [name value]}]
@@ -114,7 +148,12 @@
        (str/join ", ")))
 
 (defn properties-formula->map
-  "Transforms a formula of properties to a map of properties"
+  "Transforms a formula of properties to a map of properties.
+
+   Example:
+
+   'Property 1=Button, Property 2=Primary' -> [{:name 'Property 1' :value 'Button'}
+                                               {:name 'Property 2' :value 'Primary'}]"
   [s]
   (->> (str/split s ",")
        (mapv #(str/split % "=" 2))
@@ -124,7 +163,12 @@
                 :value (str/trim v)}))))
 
 (defn valid-properties-formula?
-  "Checks if a formula is valid"
+  "Checks if a formula is valid.
+
+   Example:
+
+   'Property 1=Button, Property 2=Primary' -> true
+   'Property 1=Button, Property 2' -> false"
   [s]
   (->> (str/split s ",")
        (mapv #(str/split % "=" 2))
@@ -134,19 +178,38 @@
                      (< (count (second %)) property-max-length)))))
 
 (defn find-properties-to-remove
-  "Compares two property maps to find which properties should be removed"
+  "Compares two property maps to find which properties should be removed.
+
+   Example:
+
+   [{:name 'Property 1' :value 'x'}
+    {:name 'Property 2' :value 'y'}]
+   [{:name 'Property 1' :value 'x'}] -> [{:name 'Property 2' :value 'y'}]"
   [prev-properties upd-properties]
   (let [upd-names (set (map :name upd-properties))]
     (filterv #(not (contains? upd-names (:name %))) prev-properties)))
 
 (defn find-properties-to-update
-  "Compares two property maps to find which properties should be updated"
+  "Compares two property maps to find which properties should be updated.
+
+   Example:
+
+   [{:name 'Property 1' :value 'x'}
+    {:name 'Property 2' :value 'y'}]
+   [{:name 'Property 1' :value 'new-x'}
+    {:name 'Property 2' :value 'y'}] -> [{:name 'Property 1' :value 'new-x'}]"
   [prev-properties upd-properties]
   (filterv #(some (fn [prop] (and (= (:name %) (:name prop))
                                   (not= (:value %) (:value prop)))) prev-properties) upd-properties))
 
 (defn find-properties-to-add
-  "Compares two property maps to find which properties should be added"
+  "Compares two property maps to find which properties should be added.
+
+   Example:
+
+   [{:name 'Property 1' :value 'x'}]
+   [{:name 'Property 1' :value 'x'}
+    {:name 'Property 2' :value 'y'}] -> [{:name 'Property 2' :value 'y'}]"
   [prev-properties upd-properties]
   (let [prev-names (set (map :name prev-properties))]
     (filterv #(not (contains? prev-names (:name %))) upd-properties)))
@@ -171,7 +234,12 @@
 
 (defn update-number-in-repeated-item
   "Add, keep or update a number in parentheses for a given item, if necessary, depending on the items
-   already present in a list, to avoid repetitions"
+   already present in a list, to avoid repetitions.
+
+   Example:
+
+   ['Property'] 'Property' -> 'Property (1)'
+   ['Property' 'Property (1)'] 'Property' -> 'Property (2)'"
   [items item]
   (let [names      (group-numbers-by-base-name items)
         [base num] (split-base-name-and-number item)
@@ -182,7 +250,13 @@
         (str base (when (pos? n) (str " (" n ")")))))))
 
 (defn update-number-in-repeated-prop-names
-  "Add, keep or update a number for each prop name depending on the previous ones"
+  "Add, keep or update a number for each prop name depending on the previous ones.
+
+   Example:
+
+   [{:name 'Property' :value 'x'}
+    {:name 'Property' :value 'y'}] -> [{:name 'Property' :value 'x'}
+                                        {:name 'Property (1)' :value 'y'}]"
   [properties]
   (->> properties
        (reduce (fn [acc prop]
@@ -191,7 +265,12 @@
                [])))
 
 (defn find-index-for-property-name
-  "Finds the index of a name in a property map"
+  "Finds the index of a name in a property map.
+
+   Example:
+
+   [{:name 'Property 1' :value 'x'}
+    {:name 'Property 2' :value 'y'}] 'Property 2' -> 1"
   [properties name]
   (some (fn [[idx prop]]
           (when (= (:name prop) name)
@@ -199,7 +278,12 @@
         (map-indexed vector properties)))
 
 (defn remove-prefix
-  "Removes the given prefix (with or without a trailing ' / ') from the beginning of the name"
+  "Removes the given prefix (with or without a trailing ' / ') from the beginning of the name.
+
+   Example:
+
+   'Button / Primary' 'Button' -> 'Primary'
+   'Button / Primary' 'Other' -> 'Button / Primary'"
   [name prefix]
   (let [long-name (str prefix " / ")]
     (cond
@@ -256,7 +340,17 @@
       - Otherwise, assign p2's value to the first unused property in properties1. A property is considered used if:
         - Its name exists in both properties1 and properties2, or
         - Its value has already been updated during the merge.
-      - If no unused properties are available in properties1, append a new property with a default name and p2's value."
+      - If no unused properties are available in properties1, append a new property with a default name and p2's value.
+
+   Example:
+
+   [{:name 'Property 1' :value 'a'}
+    {:name 'Property 2' :value 'b'}]
+   [{:name 'Property 1' :value 'x'}
+    {:name 'Property 2' :value 'y'}
+    {:name 'Property 3' :value 'z'}] -> [{:name 'Property 1' :value 'x'}
+                                          {:name 'Property 2' :value 'y'}
+                                          {:name 'Property 3' :value 'z'}]"
   [properties1 properties2]
   (let [properties2 (remove #(str/empty? (:value %)) properties2)]
     (-> (reduce
@@ -272,7 +366,15 @@
 
 (defn compare-properties
   "Compares vectors of properties keeping the value if it is the same for all
-   or setting a custom value where their values do not coincide"
+   or setting a custom value where their values do not coincide.
+
+   Example:
+
+   [[{:name 'Property 1' :value 'x'}
+     {:name 'Property 2' :value 'y'}]
+    [{:name 'Property 1' :value 'x'}
+     {:name 'Property 2' :value 'z'}]] -> [{:name 'Property 1' :value 'x'}
+                                            {:name 'Property 2' :value nil}]"
   ([properties-list]
    (compare-properties properties-list nil))
 
@@ -287,18 +389,16 @@
              {:name name :value (check-values values)})
            grouped))))
 
-(defn same-variant?
-  "Determines if all elements belong to the same variant"
-  [components]
-  (let [variant-ids (distinct (map :variant-id components))
-        not-blank?  (complement str/blank?)]
-    (and
-     (= 1 (count variant-ids))
-     (not-blank? (first variant-ids)))))
-
-(defn distance
+(defn properties-distance
   "Computes a weighted distance between two property lists `properties1` and `properties2`.
-   Latter properties weight less that previous ones"
+   Latter properties weight less that previous ones.
+
+   Example:
+
+   [{:name 'type' :value 'primary'}
+    {:name 'status' :value 'default'}]
+   [{:name 'type' :value 'primary'}
+    {:name 'status' :value 'hover'}] -> 1.0"
   [properties1 properties2]
   (let [total-num-properties (count properties1)
         xform           (map-indexed
@@ -313,7 +413,11 @@
 
 (defn variant-name-to-name
   "Transforms a variant-name (its properties values) into a standard name:
-   the real name of the shape joined by the properties values separated by '/'"
+   the real name of the shape joined by the properties values separated by '/'.
+
+   Example:
+
+   {:name 'Button' :variant-name 'Primary, Hover'} -> 'Button / Primary / Hover'"
   [variant]
   (cpn/merge-path-item (:name variant) (str/replace (:variant-name variant) #", " " / ")))
 
@@ -324,7 +428,12 @@
 
 (defn find-boolean-pair
   "Given a vector, return a map that contains the boolean equivalency if the values match
-   with any of the boolean pairs. Returns nil if none match."
+   with any of the boolean pairs. Returns nil if none match.
+
+   Example:
+
+   ['on' 'off'] -> {'on' true 'off' false}
+   ['foo' 'bar'] -> nil"
   [[a b :as v]]
   (let [a' (-> a str/trim str/lower)
         b' (-> b str/trim str/lower)]
@@ -336,3 +445,17 @@
                          (= a' f)) {b true a false}
                     :else nil))
             boolean-pairs))))
+
+(defn same-variant?
+  "Determines if all elements belong to the same variant.
+
+   Example:
+
+   [{:variant-id 'abc'} {:variant-id 'abc'}] -> true
+   [{:variant-id 'abc'} {:variant-id 'def'}] -> false"
+  [components]
+  (let [variant-ids (distinct (map :variant-id components))
+        not-blank?  (complement str/blank?)]
+    (and
+     (= 1 (count variant-ids))
+     (not-blank? (first variant-ids)))))
