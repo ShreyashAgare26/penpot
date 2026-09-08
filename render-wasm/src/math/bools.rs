@@ -268,7 +268,6 @@ fn difference(
             .iter()
             .filter(|s| path_a.contains(to_point(s.evaluate(TValue::Parametric(0.5)))))
             .copied()
-            .map(|s| s.reverse())
             .map(|b| (BezierSource::B, b)),
     );
 
@@ -278,14 +277,51 @@ fn difference(
 fn exclusion(segments_a: Vec<Bezier>, segments_b: Vec<Bezier>) -> Vec<(BezierSource, Bezier)> {
     let mut result = Vec::new();
     result.extend(segments_a.iter().copied().map(|b| (BezierSource::A, b)));
-    result.extend(
-        segments_b
-            .iter()
-            .copied()
-            .map(|s| s.reverse())
-            .map(|b| (BezierSource::B, b)),
-    );
+    result.extend(segments_b.iter().copied().map(|b| (BezierSource::B, b)));
     result
+}
+
+// Mirrors `app.common.types.path.subpath/clockwise?`.
+fn is_clockwise(path: &Path) -> bool {
+    let mut points: Vec<(f32, f32)> = Vec::new();
+
+    for segment in path.segments().iter() {
+        match *segment {
+            Segment::MoveTo(p) => {
+                if !points.is_empty() {
+                    break;
+                }
+                points.push(p);
+            }
+            Segment::LineTo(p) => points.push(p),
+            Segment::CurveTo((_, _, p)) => points.push(p),
+            Segment::Close => break,
+        }
+    }
+
+    if points.len() < 3 {
+        return false;
+    }
+
+    let mut signed_area = 0.0f64;
+    for i in 0..points.len() {
+        let (x1, y1) = points[i];
+        let (x2, y2) = points[(i + 1) % points.len()];
+        signed_area += f64::from(x1) * f64::from(y2) - f64::from(x2) * f64::from(y1);
+    }
+
+    signed_area > 0.0
+}
+
+// B must run along the result contour: against A for difference/exclusion, with A for union/intersection.
+// Deliberately not the `path.bool/content-bool-pair` rule, which reverses intersection on same
+// winding and leans on `subpath/merge-paths` flipping subpaths at join time.
+fn should_reverse_b(bool_type: BoolType, path_a: &Path, path_b: &Path) -> bool {
+    let same_winding = is_clockwise(path_a) == is_clockwise(path_b);
+    match bool_type {
+        BoolType::Union | BoolType::Intersection => !same_winding,
+        BoolType::Difference | BoolType::Exclusion => same_winding,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Copy)]
@@ -305,15 +341,22 @@ fn pop_first_from_pool(pool: &mut BezierPool) -> Option<(BezierSource, Bezier)> 
     pool.iter_mut().find_map(|e| e.take())
 }
 
-// Find and remove the segment whose start point is closest to `end` within the
-// appropriate threshold. Same-source segments use a tight threshold
-// (INTERSECT_THRESHOLD_SAMEd) so we prefer staying on the same original path;
-// cross-source segments use a wider threshold (INTERSECT_THRESHOLD_DIFFERENT)
-// to allow switching paths at intersection points.
 fn find_next_in_pool(
     pool: &mut BezierPool,
     end: DVec2,
     source: BezierSource,
+) -> Option<(BezierSource, Bezier)> {
+    if let Some(found) = take_closest_in_pool(pool, end, source, false) {
+        return Some(found);
+    }
+    take_closest_in_pool(pool, end, source, true)
+}
+
+fn take_closest_in_pool(
+    pool: &mut BezierPool,
+    end: DVec2,
+    source: BezierSource,
+    reversed: bool,
 ) -> Option<(BezierSource, Bezier)> {
     let mut best_idx: Option<usize> = None;
     let mut best_dist_sq = f64::MAX;
@@ -327,8 +370,9 @@ fn find_next_in_pool(
         } else {
             INTERSECT_THRESHOLD_DIFFERENT as f64
         };
-        let dx = bezier.start.x - end.x;
-        let dy = bezier.start.y - end.y;
+        let point = if reversed { bezier.end } else { bezier.start };
+        let dx = point.x - end.x;
+        let dy = point.y - end.y;
         let dist_sq = dx * dx + dy * dy;
         if dist_sq <= threshold * threshold && dist_sq < best_dist_sq {
             best_dist_sq = dist_sq;
@@ -336,7 +380,9 @@ fn find_next_in_pool(
         }
     }
 
-    best_idx.and_then(|i| pool[i].take())
+    best_idx
+        .and_then(|i| pool[i].take())
+        .map(|(src, bezier)| (src, if reversed { bezier.reverse() } else { bezier }))
 }
 
 fn push_bezier(result: &mut Vec<Segment>, bezier: &Bezier) {
@@ -410,6 +456,29 @@ fn beziers_to_segments(beziers: &[(BezierSource, Bezier)]) -> Vec<Segment> {
     result
 }
 
+fn bool_beziers(
+    bool_type: BoolType,
+    path_a: &Path,
+    path_b: &Path,
+) -> (Vec<(BezierSource, Bezier)>, bool) {
+    let (segs_a, mut segs_b) = split_segments(path_a, path_b);
+
+    if should_reverse_b(bool_type, path_a, path_b) {
+        for segment in segs_b.iter_mut() {
+            *segment = segment.reverse();
+        }
+    }
+
+    let beziers = match bool_type {
+        BoolType::Union => union(path_a, segs_a, path_b, segs_b),
+        BoolType::Difference => difference(path_a, segs_a, path_b, segs_b),
+        BoolType::Intersection => intersection(path_a, segs_a, path_b, segs_b),
+        BoolType::Exclusion => exclusion(segs_a, segs_b),
+    };
+
+    (beziers, path_a.is_even_odd() || path_b.is_even_odd())
+}
+
 pub fn bool_from_shapes(bool_type: BoolType, children_ids: &[Uuid], shapes: ShapesPoolRef) -> Path {
     if children_ids.is_empty() {
         return Path::default();
@@ -427,15 +496,7 @@ pub fn bool_from_shapes(bool_type: BoolType, children_ids: &[Uuid], shapes: Shap
         };
         let other_path = other.to_path(shapes);
 
-        let (segs_a, segs_b) = split_segments(&current_path, &other_path);
-
-        let is_even_odd = current_path.is_even_odd() || other_path.is_even_odd();
-        let beziers = match bool_type {
-            BoolType::Union => union(&current_path, segs_a, &other_path, segs_b),
-            BoolType::Difference => difference(&current_path, segs_a, &other_path, segs_b),
-            BoolType::Intersection => intersection(&current_path, segs_a, &other_path, segs_b),
-            BoolType::Exclusion => exclusion(segs_a, segs_b),
-        };
+        let (beziers, is_even_odd) = bool_beziers(bool_type, &current_path, &other_path);
 
         current_path = Path::new(beziers_to_segments(&beziers)).with_even_odd(is_even_odd);
     }
@@ -488,15 +549,7 @@ pub fn debug_render_bool_paths(
         };
         let other_path = other.to_path(shapes);
 
-        let (segs_a, segs_b) = split_segments(&current_path, &other_path);
-
-        let is_even_odd = current_path.is_even_odd() || other_path.is_even_odd();
-        let beziers = match bool_data.bool_type {
-            BoolType::Union => union(&current_path, segs_a, &other_path, segs_b),
-            BoolType::Difference => difference(&current_path, segs_a, &other_path, segs_b),
-            BoolType::Intersection => intersection(&current_path, segs_a, &other_path, segs_b),
-            BoolType::Exclusion => exclusion(segs_a, segs_b),
-        };
+        let (beziers, is_even_odd) = bool_beziers(bool_data.bool_type, &current_path, &other_path);
         current_path = Path::new(beziers_to_segments(&beziers)).with_even_odd(is_even_odd);
 
         if idx == 0 {
@@ -570,5 +623,86 @@ pub fn debug_render_bool_paths(
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn linear(from: (f64, f64), to: (f64, f64)) -> Bezier {
+        Bezier::from_linear_coordinates(from.0, from.1, to.0, to.1)
+    }
+
+    #[test]
+    fn test_is_clockwise() {
+        let cw = Path::new(vec![
+            Segment::MoveTo((0.0, 0.0)),
+            Segment::LineTo((10.0, 0.0)),
+            Segment::LineTo((10.0, 10.0)),
+            Segment::LineTo((0.0, 10.0)),
+            Segment::Close,
+        ]);
+        assert!(is_clockwise(&cw));
+
+        let ccw = Path::new(vec![
+            Segment::MoveTo((0.0, 0.0)),
+            Segment::LineTo((0.0, 10.0)),
+            Segment::LineTo((10.0, 10.0)),
+            Segment::LineTo((10.0, 0.0)),
+            Segment::Close,
+        ]);
+        assert!(!is_clockwise(&ccw));
+    }
+
+    #[test]
+    fn test_should_reverse_b_only_depends_on_relative_winding() {
+        let cw = Path::new(vec![
+            Segment::MoveTo((0.0, 0.0)),
+            Segment::LineTo((10.0, 0.0)),
+            Segment::LineTo((10.0, 10.0)),
+            Segment::LineTo((0.0, 10.0)),
+            Segment::Close,
+        ]);
+        let ccw = Path::new(vec![
+            Segment::MoveTo((0.0, 0.0)),
+            Segment::LineTo((0.0, 10.0)),
+            Segment::LineTo((10.0, 10.0)),
+            Segment::LineTo((10.0, 0.0)),
+            Segment::Close,
+        ]);
+
+        assert!(should_reverse_b(BoolType::Difference, &cw, &cw));
+        assert!(!should_reverse_b(BoolType::Difference, &cw, &ccw));
+        assert!(!should_reverse_b(BoolType::Union, &cw, &cw));
+        assert!(should_reverse_b(BoolType::Union, &cw, &ccw));
+    }
+
+    // Fragments from #11482: two run against the contour, so forward-only chaining left five open subpaths.
+    #[test]
+    fn test_beziers_to_segments_closes_reversed_fragments() {
+        let beziers = vec![
+            (BezierSource::A, linear((2764.00, -240.00), (2834.74, -110.71))),
+            (BezierSource::A, linear((2809.29, -85.26), (2693.26, -201.29))),
+            (BezierSource::A, linear((2718.71, -226.74), (2764.00, -240.00))),
+            (BezierSource::B, linear((2718.71, -226.74), (2834.74, -110.71))),
+            (BezierSource::B, linear((2809.29, -85.26), (2693.26, -201.29))),
+        ];
+
+        let segments = beziers_to_segments(&beziers);
+
+        let moves = segments
+            .iter()
+            .filter(|s| matches!(s, Segment::MoveTo(_)))
+            .count();
+        let closes = segments
+            .iter()
+            .filter(|s| matches!(s, Segment::Close))
+            .count();
+
+        assert_eq!(moves, 2);
+        assert_eq!(closes, 2);
+        // 3 fragments in the first subpath, 2 in the second, each dropping its closing LineTo.
+        assert_eq!(segments.len(), 7);
     }
 }
