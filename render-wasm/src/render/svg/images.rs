@@ -1,7 +1,9 @@
 use crate::error::Result;
+use crate::math::Rect;
+use crate::render::get_dest_rect;
 use crate::render::shape_renderer::ShapeRenderer;
-use crate::render::vector::VectorRenderer;
-use crate::shapes::{Fill, ImageFill, Shape};
+use crate::render::vector::{paint_svg_stroke_silhouette, VectorRenderer};
+use crate::shapes::{Fill, ImageFill, Shape, Stroke};
 use crate::state::ShapesPoolRef;
 
 use super::document::SvgLayerCanvas;
@@ -63,19 +65,107 @@ fn emit_image_fill(
     let clip_id = builder.unique("imgclip");
     builder.push_clip_path(&clip_id, shape, tree);
     let href = xml_escape_attr(url);
-    emit_linked_image_element(builder, shape, image_fill, &href, &clip_id);
+    emit_linked_image_element(builder, shape, image_fill, &href, &clip_id, shape.selrect());
     Ok(())
 }
 
-/// Emits `<g clip-path>` + `<image href>` using the shape selrect and page CTM.
+/// Emits strokes bottom -> top for SVG export.
+///
+/// Image strokes with a registered URL become a linked `<image>` clipped to the
+/// stroke silhouette (Skia drops the GPU save_layer + SrcIn path). Other strokes
+/// go through [`VectorRenderer`].
+pub(super) fn emit_strokes(
+    builder: &mut SvgLayerCanvas,
+    shared: &mut RenderResources,
+    shape: &Shape,
+    strokes: &[&Stroke],
+    scale: f32,
+) -> Result<()> {
+    if strokes.is_empty() {
+        return Ok(());
+    }
+
+    let matrix = shape.centered_transform();
+    // strokes[0] is topmost; draw bottom -> top.
+    for stroke in strokes.iter().rev() {
+        match &stroke.fill {
+            Fill::Image(image_fill) if shared.images.source_url(&image_fill.id()).is_some() => {
+                emit_image_stroke(builder, shared, shape, stroke, image_fill, scale)?;
+            }
+            _ => {
+                let canvas = builder.canvas();
+                canvas.save();
+                canvas.concat(&matrix);
+                let mut renderer = VectorRenderer::new(canvas, shared, scale, false);
+                renderer.draw_strokes(shape, std::slice::from_ref(stroke))?;
+                canvas.restore();
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Linked `<image>` clipped to the stroke outline (opaque filled path).
+fn emit_image_stroke(
+    builder: &mut SvgLayerCanvas,
+    shared: &RenderResources,
+    shape: &Shape,
+    stroke: &Stroke,
+    image_fill: &ImageFill,
+    scale: f32,
+) -> Result<()> {
+    let Some(url) = shared.images.source_url(&image_fill.id()) else {
+        return Ok(());
+    };
+
+    let clip_id = builder.unique("imgstrokeclip");
+    let canvas = builder.new_fragment();
+    {
+        let cv: &skia_safe::Canvas = &canvas;
+        cv.save();
+        cv.concat(&shape.centered_transform());
+        if !paint_svg_stroke_silhouette(cv, shape, stroke, scale) {
+            cv.restore();
+            return Ok(());
+        }
+        cv.restore();
+    }
+    builder.finish_clip_path_fragment(&clip_id, canvas);
+
+    let href = xml_escape_attr(url);
+    let dest = image_stroke_dest_rect(shape, stroke);
+    emit_linked_image_element(builder, shape, image_fill, &href, &clip_id, dest);
+    Ok(())
+}
+
+/// Where to place the linked image for an image-filled stroke.
+///
+/// Starts from the same dest as the GPU path (`selrect` + `stroke.delta()`), then
+/// grows on open paths so marker caps are still covered by the `<image>`.
+fn image_stroke_dest_rect(shape: &Shape, stroke: &Stroke) -> Rect {
+    let mut dest = get_dest_rect(&shape.selrect(), stroke.delta());
+    if !shape.is_open() {
+        return dest;
+    }
+    let cap_margin = stroke.cap_bounds_margin();
+    if cap_margin <= 0.0 {
+        return dest;
+    }
+    let mut with_caps = shape.selrect();
+    with_caps.inset((-cap_margin, -cap_margin));
+    dest.join(with_caps);
+    dest
+}
+
+/// Emits `<g clip-path>` + `<image href>` with `dest` in shape-local space.
 pub(super) fn emit_linked_image_element(
     builder: &mut SvgLayerCanvas,
     shape: &Shape,
     image_fill: &ImageFill,
     href: &str,
     clip_id: &str,
+    dest: Rect,
 ) {
-    let selrect = shape.selrect();
     let opacity = image_fill.opacity() as f32 / 255.0;
     let preserve = if image_fill.keep_aspect_ratio() {
         "xMidYMid slice"
@@ -93,10 +183,10 @@ pub(super) fn emit_linked_image_element(
     builder.open_group(&format!("clip-path=\"url(#{clip_id})\""));
     builder.push_raw(&format!(
         r#"<image href="{href}" x="{}" y="{}" width="{}" height="{}" preserveAspectRatio="{preserve}"{opacity_attr} transform="{transform}"/>"#,
-        selrect.left(),
-        selrect.top(),
-        selrect.width(),
-        selrect.height(),
+        dest.left(),
+        dest.top(),
+        dest.width(),
+        dest.height(),
     ));
     builder.close_group();
 }
