@@ -96,6 +96,11 @@ docker exec -ti penpot-penpot-backend-1 python3 manage.py create-profile --skip-
 ```
 
 
+**NOTE:** if you run Penpot with the <code class="language-bash">disable-email-verification</code>
+flag, inviting one of these profiles to a team adds it to the team right away, with no
+invitation email and no acceptance step. This is handy when you have no SMTP service
+configured. See the [email configuration section](/technical-guide/configuration/#email-configuration) for more detail.
+
 **NOTE:** the exact container name depends on your docker version and platform.
 For example it could be <code class="language-bash">penpot-penpot-backend-1</code> or <code class="language-bash">penpot_penpot-backend-1</code>.
 You can check the correct name executing <code class="language-bash">docker ps</code>.

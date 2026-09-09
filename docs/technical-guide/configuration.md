@@ -344,8 +344,12 @@ printed to the console, which means that the emails will be shown in the stdout.
 
 Note that if you plan to invite members to a team, it is recommended that you enable SMTP
 as they will need to login to their account after receiving the invite link sent an in email.
-It is currently not possible to just add someone to a team without them accepting an
-invitation email.
+
+There is one exception. When the <code class="language-bash">disable-email-verification</code>
+flag is active and the invited email already belongs to an existing profile, the invitation
+adds that profile to the team straight away: no email is sent and no acceptance step is
+needed. If the email does not match an existing profile, the usual invitation email is sent,
+so SMTP is still required for that case.
 
 If you have an SMTP service, uncomment the appropriate settings section in
 <code class="language-bash">docker-compose.yml</code> and configure those
@@ -672,6 +676,10 @@ for the user:
 - <code class="language-bash">disable-login-with-password</code>: allows disable password based login form
 - <code class="language-bash">enable-prepl-server</code>: enables PREPL server, used by manage.py and other additional
   tools to communicate internally with Penpot backend. Check the [CLI section][5] to get more detail.
+- <code class="language-bash">disable-email-verification</code>: disables the email verification
+  step on registration. It also changes how team invitations work: if the invited email already
+  belongs to an existing profile, that profile is added to the team directly, without sending an
+  invitation email. See the [email configuration section](#email-configuration).
 
 __Since version 1.13.0__
 
