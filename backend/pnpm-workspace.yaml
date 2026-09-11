@@ -1,4 +1,0 @@
-storeDir: ../.pnpm-store
-
-minimumReleaseAgeExclude:
-  - brace-expansion@5.0.8 || 5.0.9

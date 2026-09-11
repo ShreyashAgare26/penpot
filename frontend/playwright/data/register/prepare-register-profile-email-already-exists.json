@@ -1,5 +1,0 @@
-{
-  "~:type": "~:validation",
-  "~:code": "~:email-already-exists",
-  "~:hint": "email already exists"
-}
